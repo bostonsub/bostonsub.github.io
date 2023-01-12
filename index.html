@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width">
+        <title>MBTA - Arrivals and Departures</title>
+        <style>
+            table, th, td {
+                border: 1px solid black;
+                border-collapse: collapse;
+            }
+            tr:nth-child(even) {
+                background-color: gray;
+            }
+            input[type=submit] {
+                margin-left: 5px;;
+            }
+        </style>
+    </head>
+    
+    <body>
+        <div id="content" />
+        <script type="application/javascript">
+        
+            const MBTA_API = "https://api-v3.mbta.com";
+            const PREDICTIONS_ENDPOINT = "/predictions?sort=time&fields[prediction]=arrival_time,departure_time,status&include=trip&fields[trip]=headsign&filter[stop]=";
+            const STATIONS_ENDPOINT = "/stops?filter[location_type]=1";
+            const STATION_ENDPOINT = "/stops/";
+            
+            function appendElement(parent, tag, attributes, text) {
+                const element = document.createElement(tag);
+                parent.append(element);
+                for (var attributeKey in attributes) {
+                    element.setAttribute(attributeKey, attributes[attributeKey]);
+                }
+                if (text) {
+                    element.innerText = text;
+                }
+                return element;
+            }
+
+            function populateTableWithData(table, data) {
+                table.innerHTML = "";
+                const headerRow = appendElement(table, "tr");
+                appendElement(headerRow, "th", {}, "Line");
+                appendElement(headerRow, "th", {}, "Destination");
+                appendElement(headerRow, "th", {}, "Arrival");
+                appendElement(headerRow, "th", {}, "Departure");
+                appendElement(headerRow, "th", {}, "Status");
+                appendElement(headerRow, "th", {}, "Vehicle");
+                const dataData = data["data"];
+                const dataIncluded = data["included"];
+                for (var entry of dataData) {
+                    const row = appendElement(table, "tr");
+                    appendElement(row, "td", {}, entry["relationships"]["route"]["data"]["id"]);
+                    const destination = dataIncluded.find(trip => trip["id"] == entry["relationships"]["trip"]["data"]["id"])["attributes"]["headsign"];
+                    appendElement(row, "td", {}, destination);
+                    const arrivalTime = entry["attributes"]["arrival_time"];
+                    const departureTime = entry["attributes"]["departure_time"];
+                    appendElement(row, "td", {}, arrivalTime? new Date(arrivalTime).toLocaleTimeString() : "");
+                    appendElement(row, "td", {}, departureTime? new Date(departureTime).toLocaleTimeString() : "");
+                    appendElement(row, "td", {}, (status = entry["attributes"]["status"])? status : getStatusString(arrivalTime, departureTime));
+                    appendElement(row, "td", {}, (vehicleData = entry["relationships"]["vehicle"]["data"])? vehicleData["id"] : "");
+                }
+            }
+
+            function getStatusString(arrivalTime, departureTime) {
+                const currentTime = new Date();
+                if (!arrivalTime && !departureTime) {
+                    return "";
+                } else if (arrivalTime && currentTime.getTime() < new Date(arrivalTime).getTime()) {
+                    const minDiff = Math.floor((new Date(arrivalTime).getTime() - currentTime.getTime()) / 1000 / 60);
+                    return minDiff == 0? "Arriving Now" : "Arriving in " + minDiff + " minutes";
+                } else if (arrivalTime && departureTime && currentTime < new Date(departureTime)) {
+                    return "Boarding";
+                } else if (departureTime && currentTime > new Date(departureTime)) {
+                    return "Departed";
+                } else if (arrivalTime && !departureTime && currentTime > new Date(arrivalTime)) {
+                    return "Completed Trip";
+                } else if (departureTime && !arrivalTime && currentTime < new Date(departureTime)) {
+                    const minDiff = Math.floor((new Date(departureTime).getTime() - currentTime.getTime()) / 1000 / 60);
+                    return minDiff == 0? "Starting Trip Now" : "Starts Trip in " + minDiff + " minutes";
+                }
+            }
+
+            function populateTable(table, station) {
+                fetch(MBTA_API + PREDICTIONS_ENDPOINT + station).then(response => response.json()).then(data => populateTableWithData(table, data));
+            }
+
+            function populateStationList(stationList, data) {
+                appendElement(stationList, "option", {"value": "nearest"}, "Nearest Station");
+                for (var station of data["data"]) {
+                    appendElement(stationList, "option", {"value": station["id"]}, station["attributes"]["name"]);
+                }
+            }
+
+            function populateStationInfo(parent, station, data) {
+                if (data["data"]) {
+                    appendElement(parent, "h1", {}, data["data"]["attributes"]["name"]);
+                    appendElement(parent, "h2", {}, data["data"]["attributes"]["address"]);
+                    const table = appendElement(parent, "table");
+                    populateTable(table, station);
+                    setInterval(() => populateTable(table, station), 10000);
+                } else {
+                    appendElement(parent, "h1", {}, "Invalid Station ID");
+                }
+            }
+
+            function createStationPage(parent, station) {
+                fetch(MBTA_API + STATION_ENDPOINT + station).then(response => response.json()).then(data => populateStationInfo(parent, station, data));
+            }
+            
+            const params = new URLSearchParams(window.location.search);
+            const stationParam = params.get("station");
+            const content = document.getElementById("content");
+            
+            if (!stationParam) {
+                const form = appendElement(content, "form");
+                appendElement(form, "label", {"for": "station"}, "Station ID: ");
+                const stationInput = appendElement(form, "input", {"name": "station", "type": "text", "list": "station-list"});
+                const stationList = appendElement(form, "datalist", {"id": "station-list"});
+                appendElement(form, "input", {"type": "submit"});
+                fetch(MBTA_API + STATIONS_ENDPOINT).then(response => response.json()).then(data => populateStationList(stationList, data));
+            } else {
+                if(stationParam === "nearest") {
+                    const options = {
+                        enableHighAccuracy: true,
+                        timeout: 5000,
+                        maximumAge: 0
+                    }
+                    navigator.geolocation.getCurrentPosition(
+                        (pos) => {
+                            const coords = pos.coords;
+                            console.log(coords.latitude + ", " + coords.longitude);
+                            fetch(MBTA_API + `/stops?sort=distance&filter[latitude]=${coords.latitude}&filter[longitude]=${coords.longitude}&filter[radius]=0.01&filter[location_type]=1`).then(response => response.json()).then(data => {
+                                const dataData = data["data"];
+                                if (dataData.length > 0) {
+                                    console.log(dataData);
+                                    createStationPage(content, dataData[0]["id"]);
+                                } else {
+                                    appendElement(content, "h1", {}, "No stations found");
+                                }
+                            });
+                        },
+                        (err) => appendElement(content, "h1", {}, "Couldn't get location"),
+                        options);
+                } else {
+                    createStationPage(content, stationParam);
+                }
+            }
+        </script>
+    </body>
+</html>
