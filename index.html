@@ -4,15 +4,40 @@
         <meta name="viewport" content="width=device-width">
         <title>MBTA - Arrivals and Departures</title>
         <style>
-            table, th, td {
-                border: 1px solid black;
-                border-collapse: collapse;
+            table, tr, th, td {
+                width: 100%;
+            }
+            tr {
+                display: flex;
+            }
+            th, td {
+                text-align: center;
+                padding: 2% 0;
+            }
+            tr:first-child {
+                background-color: #000;
+                color: #fff;
+                text-transform: uppercase;
             }
             tr:nth-child(even) {
-                background-color: gray;
+                background-color: #eee;
             }
             input[type=submit] {
                 margin-left: 5px;;
+            }
+            @media screen and (orientation: portrait) {
+                table, tr, th, td {
+                    border: 1px solid #000;
+                    border-collapse: collapse;
+                }
+                tr {
+                    display: table-row;
+                }
+                tr:first-child {
+                    background-color: #fff;
+                    color: #000;
+                    text-transform: uppercase;
+                }
             }
         </style>
     </head>
@@ -25,6 +50,9 @@
             const PREDICTIONS_ENDPOINT = "/predictions?sort=time&fields[prediction]=arrival_time,departure_time,status&include=trip&fields[trip]=headsign&filter[stop]=";
             const STATIONS_ENDPOINT = "/stops?filter[location_type]=1";
             const STATION_ENDPOINT = "/stops/";
+            const TRIP_ENDPOINT = "/trips/";
+            const TRIP_ENDPOINT_PARAMS = "?include=vehicle";
+            const TRIP_PREDICTIONS_ENDPOINT = "/predictions?sort=time&fields[prediction]=arrival_time,departure_time,status&include=stop&fields[stop]=name&filter[trip]=";
             
             function appendElement(parent, tag, attributes, text) {
                 const element = document.createElement(tag);
@@ -40,26 +68,47 @@
 
             function populateTableWithData(table, data) {
                 table.innerHTML = "";
-                const headerRow = appendElement(table, "tr");
-                appendElement(headerRow, "th", {}, "Line");
-                appendElement(headerRow, "th", {}, "Destination");
-                appendElement(headerRow, "th", {}, "Arrival");
-                appendElement(headerRow, "th", {}, "Departure");
-                appendElement(headerRow, "th", {}, "Status");
-                appendElement(headerRow, "th", {}, "Vehicle");
+                populateHeaderRow(table, ["Line", "Destination", "Arrival", "Departure", "Status", "Vehicle"]);
                 const dataData = data["data"];
                 const dataIncluded = data["included"];
-                for (var entry of dataData) {
+                for (let entry of dataData) {
                     const row = appendElement(table, "tr");
                     appendElement(row, "td", {}, entry["relationships"]["route"]["data"]["id"]);
-                    const destination = dataIncluded.find(trip => trip["id"] == entry["relationships"]["trip"]["data"]["id"])["attributes"]["headsign"];
+                    const tripId = entry["relationships"]["trip"]["data"]["id"];
+                    const destination = dataIncluded.find(trip => trip["id"] == tripId)["attributes"]["headsign"];
                     appendElement(row, "td", {}, destination);
                     const arrivalTime = entry["attributes"]["arrival_time"];
                     const departureTime = entry["attributes"]["departure_time"];
                     appendElement(row, "td", {}, arrivalTime? new Date(arrivalTime).toLocaleTimeString() : "");
                     appendElement(row, "td", {}, departureTime? new Date(departureTime).toLocaleTimeString() : "");
                     appendElement(row, "td", {}, (status = entry["attributes"]["status"])? status : getStatusString(arrivalTime, departureTime));
-                    appendElement(row, "td", {}, (vehicleData = entry["relationships"]["vehicle"]["data"])? vehicleData["id"] : "");
+                    const vehicle_td = appendElement(row, "td");
+                    const trip_link = window.location.origin + window.location.pathname + "?trip=" + tripId;
+                    appendElement(vehicle_td, "a", {"href": trip_link}, (vehicleData = entry["relationships"]["vehicle"]["data"])? vehicleData["id"] : "trip-" + tripId);
+                }
+            }
+
+            function populateTripTableWithData(table, data) {
+                table.innerHTML = "";
+                populateHeaderRow(table, ["Station", "Arrival", "Departure", "Status"]);
+                const dataData = data["data"];
+                const dataIncluded = data["included"];
+                for (let entry of dataData) {
+                    const row = appendElement(table, "tr");
+                    const station = dataIncluded.find(stop => stop["id"] == entry["relationships"]["stop"]["data"]["id"])["attributes"]["name"];
+                    appendElement(row, "td", {}, station);
+                    const arrivalTime = entry["attributes"]["arrival_time"];
+                    const departureTime = entry["attributes"]["departure_time"];
+                    appendElement(row, "td", {}, arrivalTime? new Date(arrivalTime).toLocaleTimeString() : "");
+                    appendElement(row, "td", {}, departureTime? new Date(departureTime).toLocaleTimeString() : "");
+                    appendElement(row, "td", {}, (status = entry["attributes"]["status"])? status : getStatusString(arrivalTime, departureTime));
+                }
+            }
+
+            function populateHeaderRow(table, titles) {
+                const headerRow = appendElement(table, "tr");
+                for (let title of titles) {
+                    appendElement(headerRow, "th", {}, title);
                 }
             }
 
@@ -86,6 +135,10 @@
                 fetch(MBTA_API + PREDICTIONS_ENDPOINT + station).then(response => response.json()).then(data => populateTableWithData(table, data));
             }
 
+            function populateTripTable(table, trip) {
+                fetch(MBTA_API + TRIP_PREDICTIONS_ENDPOINT + trip).then(response => response.json()).then(data => populateTripTableWithData(table, data));
+            }
+
             function populateStationList(stationList, data) {
                 appendElement(stationList, "option", {"value": "nearest"}, "Nearest Station");
                 for (var station of data["data"]) {
@@ -96,7 +149,7 @@
             function populateStationInfo(parent, station, data) {
                 if (data["data"]) {
                     appendElement(parent, "h1", {}, data["data"]["attributes"]["name"]);
-                    appendElement(parent, "h2", {}, data["data"]["attributes"]["address"]);
+                    appendElement(parent, "p", {}, "Address: " + data["data"]["attributes"]["address"]);
                     const table = appendElement(parent, "table");
                     populateTable(table, station);
                     setInterval(() => populateTable(table, station), 10000);
@@ -105,22 +158,41 @@
                 }
             }
 
+            function populateTripInfo(parent, trip, data) {
+                if (data["data"]) {
+                    appendElement(parent, "h1", {}, "Trip " + data["data"]["id"]);
+                    appendElement(parent, "p", {}, "Vehicle: " + data["data"]["relationships"]["vehicle"]["data"]["id"]);
+                    appendElement(parent, "p", {}, "Route: " + data["data"]["relationships"]["route"]["data"]["id"]);
+                    appendElement(parent, "p", {}, "Destination: " + data["data"]["attributes"]["headsign"]);
+                    const table = appendElement(parent, "table");
+                    populateTripTable(table, trip);
+                    setInterval(() => populateTripTable(table, trip), 10000);
+                } else {
+                    appendElement(parent, "h1", {}, "Invalid Trip ID");
+                }
+            }
+
             function createStationPage(parent, station) {
                 fetch(MBTA_API + STATION_ENDPOINT + station).then(response => response.json()).then(data => populateStationInfo(parent, station, data));
+            }
+
+            function createTripPage(parent, trip) {
+                fetch(MBTA_API + TRIP_ENDPOINT + trip + TRIP_ENDPOINT_PARAMS).then(response => response.json()).then(data => populateTripInfo(parent, trip, data));
             }
             
             const params = new URLSearchParams(window.location.search);
             const stationParam = params.get("station");
+            const tripParam = params.get("trip");
             const content = document.getElementById("content");
             
-            if (!stationParam) {
+            if (!stationParam && !tripParam) {
                 const form = appendElement(content, "form");
                 appendElement(form, "label", {"for": "station"}, "Station ID: ");
                 const stationInput = appendElement(form, "input", {"name": "station", "type": "text", "list": "station-list"});
                 const stationList = appendElement(form, "datalist", {"id": "station-list"});
                 appendElement(form, "input", {"type": "submit"});
                 fetch(MBTA_API + STATIONS_ENDPOINT).then(response => response.json()).then(data => populateStationList(stationList, data));
-            } else {
+            } else if (stationParam && !tripParam) {
                 if(stationParam === "nearest") {
                     const options = {
                         enableHighAccuracy: true,
@@ -146,6 +218,10 @@
                 } else {
                     createStationPage(content, stationParam);
                 }
+            } else if (tripParam && !stationParam) {
+                createTripPage(content, tripParam);
+            } else {
+                appendElement(content, "h1", {}, "Invalid Parameters");
             }
         </script>
     </body>
