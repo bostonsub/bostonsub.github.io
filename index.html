@@ -95,8 +95,11 @@
                 const dataIncluded = data["included"];
                 for (let entry of dataData) {
                     const row = appendElement(table, "tr");
-                    const station = dataIncluded.find(stop => stop["id"] == entry["relationships"]["stop"]["data"]["id"])["attributes"]["name"];
-                    appendElement(row, "td", {}, station);
+                    const station = dataIncluded.find(stop => stop["id"] == entry["relationships"]["stop"]["data"]["id"]);
+                    const stationName = station["attributes"]["name"];
+                    const stationId = station["relationships"]["parent_station"]["data"]["id"];
+                    const stationLink = window.location.origin + window.location.pathname + "?station=" + stationId;
+                    appendElement(row, "a", {"href" : stationLink}, stationName);
                     const arrivalTime = entry["attributes"]["arrival_time"];
                     const departureTime = entry["attributes"]["departure_time"];
                     appendElement(row, "td", {}, arrivalTime? new Date(arrivalTime).toLocaleTimeString() : "");
